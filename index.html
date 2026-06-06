@@ -219,9 +219,65 @@ function parseMarkdown(text) {
     let codeContent = '';
     let inList = false;
     let inBlockquote = false;
+    let inTable = false;
+    let tableRows = [];
+    let taskList = false;
 
-    function closeList() { if (inList) { html += '</ul>\n'; inList = false; } }
+    function closeList() { if (inList) { html += '</ul>\n'; inList = false; taskList = false; } }
     function closeBlockquote() { if (inBlockquote) { html += '</blockquote>\n'; inBlockquote = false; } }
+    function closeTable() { if (inTable) { html += renderTable(tableRows); inTable = false; tableRows = []; } }
+
+    function renderTable(rows) {
+        if (rows.length < 2) return '';
+        let out = '<table style="border-collapse:collapse;width:100%;margin:0.8rem 0;font-size:0.85rem">\n';
+        // Header row (first)
+        const headers = parseTableRow(rows[0]);
+        out += '<thead><tr>';
+        headers.forEach(h => {
+            out += '<th style="border:1px solid var(--text-muted);padding:6px 10px;text-align:left;background:var(--accent-subtle);font-weight:600">' + parseInline(h.trim()) + '</th>';
+        });
+        out += '</tr></thead>\n<tbody>\n';
+        // Skip separator row (second)
+        for (let i = 2; i < rows.length; i++) {
+            const cells = parseTableRow(rows[i]);
+            if (cells.length === 0) continue;
+            out += '<tr>';
+            cells.forEach(c => {
+                out += '<td style="border:1px solid var(--text-muted);padding:6px 10px">' + parseInline(c.trim()) + '</td>';
+            });
+            out += '</tr>\n';
+        }
+        out += '</tbody>\n</table>\n';
+        return out;
+    }
+
+    function parseTableRow(line) {
+        const parts = [];
+        let current = '';
+        let inCell = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '|') {
+                if (!inCell && current.trim() === '') {
+                    current = '';
+                    inCell = true;
+                    continue;
+                }
+                parts.push(current);
+                current = '';
+                inCell = true;
+            } else {
+                current += ch;
+                inCell = true;
+            }
+        }
+        if (inCell) parts.push(current);
+        return parts;
+    }
+
+    function isTableSeparator(line) {
+        return /^\|?[\s:-]+\|[\s:-]+(\|[\s:-]+)*\|?$/.test(line);
+    }
 
     for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
@@ -244,11 +300,48 @@ function parseMarkdown(text) {
         }
 
         if (line.trim() === '') {
-            closeList(); closeBlockquote();
+            closeList(); closeBlockquote(); closeTable();
             continue;
         }
 
+        // Table detection
+        if (line.startsWith('|') && line.endsWith('|')) {
+            closeList(); closeBlockquote();
+            const cells = parseTableRow(line);
+            if (cells.length >= 2) {
+                if (isTableSeparator(line)) {
+                    // Separator row
+                    if (inTable) tableRows.push(line);
+                    continue;
+                }
+                if (!inTable) {
+                    inTable = true;
+                    tableRows = [line];
+                } else {
+                    tableRows.push(line);
+                }
+                continue;
+            }
+        }
+        // If we were building a table but this line isn't a table row, render it
+        if (inTable && !line.startsWith('|')) {
+            closeTable();
+        }
+        if (inTable) continue;
+
         closeList();
+
+        // Task list item
+        const taskMatch = line.match(/^(\s*)[-*+]\s+\[([ xX])\]\s+(.+)/);
+        if (taskMatch) {
+            const checked = taskMatch[2] === 'x' || taskMatch[2] === 'X';
+            const text = taskMatch[3];
+            if (!inList) { html += '<ul style="list-style:none;padding-left:1.5rem">\n'; inList = true; }
+            html += '<li style="margin:0.2rem 0">';
+            html += '<input type="checkbox" ' + (checked ? 'checked ' : '') + 'disabled style="accent-color:var(--accent);margin-right:0.4rem">';
+            html += parseInline(text) + '</li>\n';
+            continue;
+        }
 
         if (line.startsWith('> ')) {
             closeBlockquote();
@@ -281,7 +374,7 @@ function parseMarkdown(text) {
     if (inCodeBlock) {
         html += '<pre><code>' + escapeHtml(codeContent) + '</code></pre>\n';
     }
-    closeList(); closeBlockquote();
+    closeList(); closeBlockquote(); closeTable();
     return html;
 }
 
@@ -290,6 +383,7 @@ function parseInline(text) {
         .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/~~(.+?)~~/g, '<s>$1</s>')
         .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
@@ -313,12 +407,27 @@ Type **markdown** on the left, see *rendered* HTML on the right.
 
 ### Features
 
-- **Bold** text using \\*\\*text\\*\\*
-- *Italic* text using \\*text\\*  
+- **Bold** text using \*\*text\*\*
+- *Italic* text using \*text\*  
+- ~~Strikethrough~~ using \~\~text\~\~
 - [Links](https://example.com)
-- \`inline code\` and code blocks
+- `inline code` and code blocks
 
 > Blockquotes for emphasis
+
+### Task Lists
+
+- [x] Completed task
+- [ ] Unfinished task
+- [ ] Another todo item
+
+### Tables
+
+| Feature | Status |
+|---------|--------|
+| Tables | ✅ |
+| Task lists | ✅ |
+| Strikethrough | ✅ |
 
 Horizontal rule:
 
