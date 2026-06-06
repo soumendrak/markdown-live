@@ -149,6 +149,48 @@ h1 {
     padding: 0.15rem 0.4rem;
     border-radius: 4px;
 }
+/* Tables */
+.preview-pane table {
+    border-collapse: collapse;
+    margin: 0.8rem 0;
+    width: 100%;
+    font-size: 0.85rem;
+}
+.preview-pane th, .preview-pane td {
+    border: 1px solid var(--text-muted);
+    padding: 0.4rem 0.7rem;
+    text-align: left;
+}
+.preview-pane th {
+    background: var(--accent-subtle);
+    color: var(--accent-light);
+    font-weight: 600;
+}
+.preview-pane tr:nth-child(even) {
+    background: rgba(255,255,255,0.02);
+}
+/* Task lists */
+.preview-pane ul.task-list {
+    list-style: none;
+    padding-left: 0.5rem;
+}
+.preview-pane .task-list-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.preview-pane .task-list-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 1rem;
+    height: 1rem;
+    cursor: default;
+    pointer-events: none;
+}
+/* Strikethrough */
+.preview-pane del {
+    color: var(--text-muted);
+    text-decoration: line-through;
+}
 .toolbar {
     display: flex;
     gap: 0.5rem;
@@ -219,9 +261,24 @@ function parseMarkdown(text) {
     let codeContent = '';
     let inList = false;
     let inBlockquote = false;
+    let inTable = false;
+    let tableHeader = '';
+    let tableAlign = '';
+    let tableRows = [];
+    let inTaskList = false;
 
     function closeList() { if (inList) { html += '</ul>\n'; inList = false; } }
     function closeBlockquote() { if (inBlockquote) { html += '</blockquote>\n'; inBlockquote = false; } }
+    function closeTable() {
+        if (inTable) {
+            html += '<table>\n';
+            if (tableHeader) html += '<thead><tr>' + tableHeader + '</tr></thead>\n';
+            html += '<tbody>\n';
+            tableRows.forEach(r => { html += '<tr>' + r + '</tr>\n'; });
+            html += '</tbody>\n</table>\n';
+            inTable = false; tableHeader = ''; tableAlign = ''; tableRows = [];
+        }
+    }
 
     for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
@@ -232,7 +289,7 @@ function parseMarkdown(text) {
                 codeContent = '';
                 inCodeBlock = false;
             } else {
-                closeList(); closeBlockquote();
+                closeList(); closeBlockquote(); closeTable();
                 inCodeBlock = true;
             }
             continue;
@@ -242,6 +299,29 @@ function parseMarkdown(text) {
             codeContent += (codeContent ? '\n' : '') + line;
             continue;
         }
+
+        // Detect table separator row (e.g. |---|---|)
+        if (line.trim().startsWith('|') && /^\|[\s:-]+\|/.test(line.trim()) && line.includes('-')) {
+            tableAlign = line; // store for alignment parsing
+            continue;
+        }
+
+        // Detect table row
+        if (line.trim().startsWith('|') && line.trim().endsWith('|') && (line.match(/\|/g) || []).length >= 3) {
+            if (!inTable && !tableHeader) {
+                inTable = true;
+                closeList(); closeBlockquote();
+                // First row is header
+                tableHeader = line.split(/\|/).filter(c => c.trim()).map(c => '<th>' + parseInline(c.trim()) + '</th>').join('');
+                continue;
+            }
+            if (inTable) {
+                tableRows.push(line.split(/\|/).filter(c => c.trim()).map(c => '<td>' + parseInline(c.trim()) + '</td>').join(''));
+                continue;
+            }
+        }
+
+        if (inTable) { closeTable(); }
 
         if (line.trim() === '') {
             closeList(); closeBlockquote();
@@ -269,6 +349,16 @@ function parseMarkdown(text) {
             continue;
         }
 
+        // Task list
+        let taskMatch = line.match(/^(\s*)[-*+]\s+\[( |x|X)\]\s+(.+)/);
+        if (taskMatch) {
+            const checked = taskMatch[2] !== ' ';
+            const text = taskMatch[3];
+            if (!inList) { html += '<ul class="task-list">\n'; inList = true; }
+            html += '<li class="task-list-item"><input type="checkbox" ' + (checked ? 'checked' : '') + ' disabled>' + parseInline(text) + '</li>\n';
+            continue;
+        }
+
         if (line.match(/^[-*+]\s+/)) {
             if (!inList) { html += '<ul>\n'; inList = true; }
             html += '<li>' + parseInline(line.replace(/^[-*+]\s+/, '')) + '</li>\n';
@@ -281,7 +371,7 @@ function parseMarkdown(text) {
     if (inCodeBlock) {
         html += '<pre><code>' + escapeHtml(codeContent) + '</code></pre>\n';
     }
-    closeList(); closeBlockquote();
+    closeList(); closeBlockquote(); closeTable();
     return html;
 }
 
@@ -290,6 +380,7 @@ function parseInline(text) {
         .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/~~(.+?)~~/g, '<del>$1</del>')
         .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
         .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
